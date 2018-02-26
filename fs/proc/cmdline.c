@@ -2,10 +2,13 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <asm/setup.h>
+
+static char new_command_line[COMMAND_LINE_SIZE];
 
 static int cmdline_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "%s\n", saved_command_line);
+    seq_printf(m, "%s\n", new_command_line);
 	return 0;
 }
 
@@ -21,6 +24,47 @@ static const struct file_operations cmdline_proc_fops = {
 	.release	= single_release,
 };
 
+
+static int remove_flag(char *command_line, const char *flag)
+{
+    char *start_ptr, *end_ptr;
+    int flag_found = 0;
+
+    /* Remove all occurences of flag. */
+    while ((start_ptr = strstr(command_line, flag))) {
+        flag_found = 1;
+
+        /* Find delimiter before start of next flag. */
+        end_ptr = strchr(start_ptr, ' ');
+
+        if (end_ptr) {
+            /* Remove flag and following delimiter. */
+            memmove(start_ptr, end_ptr + 1, strnlen(end_ptr, COMMAND_LINE_SIZE));
+        } else if (start_ptr > command_line && start_ptr[-1] == ' ') {
+            /* Remove flag from end of command line when multiple flags present. */
+            start_ptr[-1] = 0;
+        } else {
+            /* Remove flag from command line when it's the only one present. */
+            start_ptr[0] = 0;
+        }
+    }
+
+    return flag_found;
+}
+
+static void replace_flag(char *command_line, const char *key, const char *value)
+{
+	if (remove_flag(command_line, key)) {
+		if (strnlen(command_line, COMMAND_LINE_SIZE)) {
+			/* Append delimiter to command line. */
+			strncat(command_line, " ", COMMAND_LINE_SIZE);
+		}
+		/* Append replacement flag to command line. */
+		strncat(command_line, key, COMMAND_LINE_SIZE);
+		strncat(command_line, value, COMMAND_LINE_SIZE);
+	}
+}
+
 static int __init proc_cmdline_init(void)
 {
 	char *offset_addr;
@@ -28,6 +72,14 @@ static int __init proc_cmdline_init(void)
 	offset_addr = strstr(saved_command_line, "androidboot.mode=reboot");
 	if (offset_addr != NULL)
 		strncpy(offset_addr + 17, "normal", 6);
+
+	strncpy(new_command_line, saved_command_line, COMMAND_LINE_SIZE);
+
+	/* Spoof command line parameters in /proc/fs with values that pass the SafetyNet CTS. */
+	replace_flag(new_command_line, "androidboot.enable_dm_verity=", "1");
+	replace_flag(new_command_line, "androidboot.secboot=", "enabled");
+	replace_flag(new_command_line, "androidboot.verifiedbootstate=", "green");
+	replace_flag(new_command_line, "androidboot.veritymode=", "enforcing");
 
 	proc_create("cmdline", 0, NULL, &cmdline_proc_fops);
 	return 0;
